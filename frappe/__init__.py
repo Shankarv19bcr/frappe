@@ -61,8 +61,7 @@ class _dict(dict):
 
 	def __getattr__(self, key):
 		ret = self.get(key)
-		# "__deepcopy__" exception added to fix frappe#14833 via DFP
-		if not ret and key.startswith("__") and key != "__deepcopy__":
+		if not ret and key.startswith("__"):
 			raise AttributeError()
 		return ret
 
