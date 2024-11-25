@@ -6,6 +6,7 @@ import signal
 import sys
 import time
 import unittest
+import warnings
 
 import click
 import requests
@@ -84,33 +85,26 @@ class ParallelTestRunner:
 			print("running tests from", "/".join(file_info))
 			return
 
-		frappe.set_user("Administrator")
+		if frappe.session.user != "Administrator":
+			from frappe.deprecation_dumpster import deprecation_warning
+
+			deprecation_warning(
+				"2024-11-13",
+				"v17",
+				"Setting the test environment user to 'Administrator' by the test runner is deprecated. The UnitTestCase now ensures a consistent user environment on set up and tear down at the class level. ",
+			)
+			frappe.set_user("Administrator")
 		path, filename = file_info
 		module = self.get_module(path, filename)
-		if "erpnext" in path:
-			self._pre_create_test_dependency_records(module, path, filename)
+		from frappe.deprecation_dumpster import compat_preload_test_records_upfront
+
+		compat_preload_test_records_upfront([(module, path, filename)])
 		test_suite = unittest.TestSuite()
 		module_test_cases = unittest.TestLoader().loadTestsFromModule(module)
 		test_suite.addTest(module_test_cases)
+		self.test_result.startTestRun()
 		test_suite(self.test_result)
-
-	# If an app depends on pre-creation, its tests should be revised to
-	# manage state in such a way that created during IntegrationTestCase.setUpClass
-	# is suitable
-	def _pre_create_test_dependency_records(self, module, path, filename):
-		if hasattr(module, "test_dependencies"):
-			for doctype in module.test_dependencies:
-				make_test_records(doctype, commit=True)
-
-		if os.path.basename(os.path.dirname(path)) == "doctype":
-			# test_data_migration_connector.py > data_migration_connector.json
-			test_record_filename = re.sub("^test_", "", filename).replace(".py", ".json")
-			test_record_file_path = os.path.join(path, test_record_filename)
-			if os.path.exists(test_record_file_path):
-				with open(test_record_file_path) as f:
-					doc = json.loads(f.read())
-					doctype = doc["name"]
-					make_test_records(doctype, commit=True)
+		self.test_result.stopTestRun()
 
 	def get_module(self, path, filename):
 		app_path = frappe.get_app_path(self.app)

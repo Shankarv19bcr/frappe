@@ -96,16 +96,19 @@ class IntegrationTestPreparation:
 		"""Run 'before_tests' hooks"""
 		logger.info(f'Running "before_tests" hooks for {category} tests on app: {app}')
 		for hook_function in frappe.get_hooks("before_tests", app_name=app):
-			logger.info('Running "before_tests" hook function {hook_function}')
+			logger.info(f'Running "before_tests" hook function {hook_function}')
 			frappe.get_attr(hook_function)()
 
 	@staticmethod
 	@debug_timer
 	def _create_global_test_record_dependencies(app: str, category: str):
 		"""Create global test record dependencies"""
-		test_module = frappe.get_module(f"{app}.tests")
-		if hasattr(test_module, "global_test_dependencies"):
-			logger.info(f"Creating global test record dependencies for {category} tests on {app} ...")
-			for doctype in test_module.global_test_dependencies:
-				logger.debug(f"Creating global test records for {doctype}")
-				make_test_records(doctype, commit=True)
+		try:
+			test_module = frappe.get_module(f"{app}.tests")
+			if hasattr(test_module, "global_test_dependencies"):
+				logger.info(f"Creating global test record dependencies for {category} tests on {app} ...")
+				for doctype in test_module.global_test_dependencies:
+					logger.debug(f"Creating global test records for {doctype}")
+					make_test_records(doctype, commit=True)
+		except ModuleNotFoundError:
+			pass

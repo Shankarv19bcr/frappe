@@ -61,7 +61,24 @@ def main(
 
 	# Prepare debug log message
 	debug_params = []
-	for param_name in ["site", "app", "module", "doctype", "module_def", "doctype_list_path"]:
+	for param_name in [
+		"site",
+		"app",
+		"module",
+		"doctype",
+		"module_def",
+		"verbose",
+		"tests",
+		"force",
+		"profile",
+		"junit_xml_output",
+		"doctype_list_path",
+		"failfast",
+		"case",
+		"skip_before_tests",
+		"pdb_on_exceptions",
+		"selected_categories",
+	]:
 		param_value = locals()[param_name]
 		if param_value is not None:
 			debug_params.append(f"{param_name}={param_value}")
@@ -98,11 +115,12 @@ def main(
 			verbosity=2 if testing_module_logger.getEffectiveLevel() < logging.INFO else 1,
 			tb_locals=testing_module_logger.getEffectiveLevel() <= logging.INFO,
 			cfg=test_config,
+			buffer=not bool(pdb_on_exceptions),
 		)
 
 		if doctype or doctype_list_path:
 			doctype = _load_doctype_list(doctype_list_path) if doctype_list_path else doctype
-			discover_doctype_tests(doctype, runner, force, app)
+			discover_doctype_tests(doctype, runner, app, force)
 		elif module_def:
 			_run_module_def_tests(app, module_def, runner, force)
 		elif module:
@@ -197,7 +215,7 @@ def _run_module_def_tests(app, module_def, runner: "TestRunner", force) -> "Test
 	from frappe.testing import discover_doctype_tests
 
 	doctypes = _get_doctypes_for_module_def(app, module_def)
-	return discover_doctype_tests(doctypes, runner, force, app)
+	return discover_doctype_tests(doctypes, runner, app, force)
 
 
 def _get_doctypes_for_module_def(app, module_def):
@@ -343,12 +361,12 @@ def run_parallel_tests(
 
 	from frappe.coverage import CodeCoverage
 
-	with CodeCoverage(with_coverage, app):
+	with CodeCoverage(with_coverage, app) as cc:
 		site = get_site(context)
 		if use_orchestrator:
 			from frappe.parallel_test_runner import ParallelTestWithOrchestrator
 
-			ParallelTestWithOrchestrator(app, site=site)
+			runner = ParallelTestWithOrchestrator(app, site=site)
 		else:
 			from frappe.parallel_test_runner import ParallelTestRunner
 
@@ -359,7 +377,25 @@ def run_parallel_tests(
 				total_builds=total_builds,
 				dry_run=dry_run,
 			)
-			runner.setup_and_run()
+		mode = "Orchestrator" if use_orchestrator else "Parallel"
+		banner = f"""
+		╔════════════════════════════════════════════╗
+		║   Parallel Test Runner Execution Summary   ║
+		╠════════════════════════════════════════════╣
+		║ Mode:           {mode:<26} ║
+		║ App:            {app:<26} ║
+		║ Site:           {site:<26} ║
+		║ Build Number:   {build_number:<26} ║
+		║ Total Builds:   {total_builds:<26} ║
+		║ Tests in Build: ~{runner.total_tests:<25} ║"""
+		if cc.with_coverage:
+			banner += """
+			║ Coverage Rep.:  {cc.outfile:<26} ║"""
+		banner += """
+		╚════════════════════════════════════════════╝
+		"""
+		print(banner)
+		runner.setup_and_run()
 
 
 @click.command(

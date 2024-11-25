@@ -32,7 +32,6 @@ from frappe.utils import (
 	today,
 )
 from frappe.utils.data import sha256_hash
-from frappe.utils.deprecations import deprecated, deprecation_warning
 from frappe.utils.password import check_password, get_password_reset_limit
 from frappe.utils.password import update_password as _update_password
 from frappe.utils.user import get_system_managers
@@ -227,9 +226,7 @@ class User(Document):
 		self.roles = [r for r in self.roles if r.role in new_roles]
 		self.append_roles(*new_roles)
 
-	@deprecated
-	def validate_roles(self):
-		self.populate_role_profile_roles()
+	from frappe.deprecation_dumpster import validate_roles
 
 	def move_role_profile_name_to_role_profiles(self):
 		"""This handles old role_profile_name field if programatically set.
@@ -243,8 +240,12 @@ class User(Document):
 			self.role_profile_name = None
 			return
 
+		from frappe.deprecation_dumpster import deprecation_warning
+
 		deprecation_warning(
-			"The field `role_profile_name` is deprecated and will be removed in v16, use `role_profiles` child table instead."
+			"unknown",
+			"v16",
+			"The field `role_profile_name` is deprecated and will be removed in v16, use `role_profiles` child table instead.",
 		)
 		self.append("role_profiles", {"role_profile": self.role_profile_name})
 		self.role_profile_name = None
@@ -546,17 +547,6 @@ class User(Document):
 
 		# delete shares
 		frappe.db.delete("DocShare", {"user": self.name})
-		# delete messages
-		table = DocType("Communication")
-		frappe.db.delete(
-			table,
-			filters=(
-				(table.communication_type.isin(["Chat", "Notification"]))
-				& (table.reference_doctype == "User")
-				& ((table.reference_name == self.name) | table.owner == self.name)
-			),
-			run=False,
-		)
 		# unlink contact
 		table = DocType("Contact")
 		frappe.qb.update(table).where(table.user == self.name).set(table.user, None).run()
@@ -844,7 +834,7 @@ def get_all_roles():
 @frappe.whitelist()
 def get_roles(arg=None):
 	"""get roles for a user"""
-	return frappe.get_roles(frappe.form_dict["uid"])
+	return frappe.get_roles(frappe.form_dict.get("uid", frappe.session.user))
 
 
 @frappe.whitelist()
@@ -908,12 +898,15 @@ def update_password(
 
 @frappe.whitelist(allow_guest=True)
 def test_password_strength(new_password: str, key=None, old_password=None, user_data: tuple | None = None):
-	from frappe.utils.deprecations import deprecation_warning
 	from frappe.utils.password_strength import test_password_strength as _test_password_strength
 
 	if key is not None or old_password is not None:
+		from frappe.deprecation_dumpster import deprecation_warning
+
 		deprecation_warning(
-			"Arguments `key` and `old_password` are deprecated in function `test_password_strength`."
+			"unknown",
+			"v17",
+			"Arguments `key` and `old_password` are deprecated in function `test_password_strength`.",
 		)
 
 	enable_password_policy = frappe.get_system_settings("enable_password_policy")
@@ -1085,41 +1078,34 @@ def reset_password(user: str) -> str:
 @frappe.whitelist()
 @frappe.validate_and_sanitize_search_inputs
 def user_query(doctype, txt, searchfield, start, page_len, filters):
-	from frappe.desk.reportview import get_filters_cond, get_match_cond
-
 	doctype = "User"
-	conditions = []
 
-	user_type_condition = "and user_type != 'Website User'"
-	if filters and filters.get("ignore_user_type") and frappe.session.data.user_type == "System User":
-		user_type_condition = ""
-	filters and filters.pop("ignore_user_type", None)
+	list_filters = {
+		"enabled": 1,
+		"docstatus": ["<", 2],
+	}
 
-	txt = f"%{txt}%"
-	return frappe.db.sql(
-		"""SELECT `name`, CONCAT_WS(' ', first_name, middle_name, last_name)
-        FROM `tabUser`
-        WHERE `enabled`=1
-            {user_type_condition}
-            AND `docstatus` < 2
-            AND `name` NOT IN ({standard_users})
-            AND ({key} LIKE %(txt)s
-                OR CONCAT_WS(' ', first_name, middle_name, last_name) LIKE %(txt)s)
-            {fcond} {mcond}
-        ORDER BY
-            CASE WHEN `name` LIKE %(txt)s THEN 0 ELSE 1 END,
-            CASE WHEN concat_ws(' ', first_name, middle_name, last_name) LIKE %(txt)s
-                THEN 0 ELSE 1 END,
-            NAME asc
-        LIMIT %(page_len)s OFFSET %(start)s
-    """.format(
-			user_type_condition=user_type_condition,
-			standard_users=", ".join(frappe.db.escape(u) for u in STANDARD_USERS),
-			key=searchfield,
-			fcond=get_filters_cond(doctype, filters, conditions),
-			mcond=get_match_cond(doctype),
-		),
-		dict(start=start, page_len=page_len, txt=txt),
+	# Check if we have a search term, and decide the filters depending on the search term
+	or_filters = [[searchfield, "like", f"%{txt}%"]]
+	if "name" in searchfield:
+		or_filters += [[field, "like", f"%{txt}%"] for field in ("first_name", "middle_name", "last_name")]
+
+	if filters:
+		if not (filters.get("ignore_user_type") and frappe.session.data.user_type == "System User"):
+			list_filters["user_type"] = ["!=", "Website User"]
+
+		filters.pop("ignore_user_type", None)
+		list_filters.update(filters)
+
+	return frappe.get_list(
+		doctype,
+		filters=list_filters,
+		fields=["name", "full_name"],
+		limit_start=start,
+		limit_page_length=page_len,
+		order_by="name asc",
+		or_filters=or_filters,
+		as_list=True,
 	)
 
 
